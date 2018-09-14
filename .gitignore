@@ -35,6 +35,7 @@
 # VS 2015+
 *.vc.vc.opendb
 *.vc.db
+*.csproj.user
 
 # Visual Studio temp something
 .vs/
