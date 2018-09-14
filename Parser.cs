@@ -11,8 +11,37 @@ using System.IO;
 
 namespace VkDumpViewer
 {
-	public struct FEntry
+	public class FBase
 	{
+		public virtual void Fill(TreeNode Node)
+		{
+		}
+	}
+
+	public class FCommand : FBase
+	{
+		public string CmdBuffer;
+	}
+
+	public class FBeginCmdBuffer : FCommand
+	{
+		public override void Fill(TreeNode Node)
+		{
+			Node.Nodes.Add(CmdBuffer + ": BEGIN");
+		}
+	}
+
+	public class FEndCmdBuffer : FCommand
+	{
+		public override void Fill(TreeNode Node)
+		{
+			Node.Nodes.Add(CmdBuffer + ": END");
+		}
+	}
+
+	public class FEntry
+	{
+		public List<FBase> Items = new List<FBase>();
 	}
 
 	public class FParser
@@ -23,6 +52,7 @@ namespace VkDumpViewer
 		string CurrentLine;
 		int CurrentLineCharIndex = 0;
 		char[] CurrentLineChars;
+		FEntry CurrentEntry;
 
 		public Dictionary<int, Dictionary<int, FEntry>> Entries = new Dictionary<int, Dictionary<int, FEntry>>();
 
@@ -54,7 +84,8 @@ namespace VkDumpViewer
 		void Match(string Keyword)
 		{
 			SkipWhitespace();
-			if (Keyword == CurrentLine.Substring(CurrentLineCharIndex, Keyword.Length))
+			//if (Keyword == CurrentLine.Substring(CurrentLineCharIndex, Keyword.Length))
+			if (CurrentLine.IndexOf(Keyword, CurrentLineCharIndex, Keyword.Length) == CurrentLineCharIndex)
 			{
 				CurrentLineCharIndex += Keyword.Length;
 			}
@@ -100,24 +131,41 @@ namespace VkDumpViewer
 			Match(",");
 			Match("Frame");
 			int Frame = ParseInt();
+			Match(":");
 
 			if (!Entries.ContainsKey(Frame))
 			{
 				Entries.Add(Frame, new Dictionary<int, FEntry>());
 			}
 
-			if (!Entries[Frame].ContainsKey(Thread))
+			if (Entries[Frame].ContainsKey(Thread))
 			{
-				Entries[Frame].Add(Thread, new FEntry());
+				CurrentEntry = Entries[Frame][Thread];
+			}
+			else
+			{
+				CurrentEntry = new FEntry();
+				Entries[Frame].Add(Thread, CurrentEntry);
 				Console.WriteLine((LineIndex + 1) + ": Thread " + Thread + ", Frame " + Frame);
 			}
-
+			
 			ReadLine();
 		}
 
 		bool HasCommands()
 		{
 			return CurrentLine != "" && LineIndex < Lines.Length;
+		}
+
+		bool PeekAndAdvance(string Keyword)
+		{
+			if (CurrentLineCharIndex + Keyword.Length <= CurrentLine.Length && CurrentLine.IndexOf(Keyword, CurrentLineCharIndex, Keyword.Length) != -1)
+			{
+				CurrentLineCharIndex += Keyword.Length;
+				return true;
+			}
+
+			return false;
 		}
 
 		void ParseEntry()
@@ -128,14 +176,14 @@ namespace VkDumpViewer
 
 				while (HasCommands())
 				{
-					ReadLine();
+					ParseCommand();
 				}
 
 				ReadLine();
 			}
-			catch (Exception)
+			catch(Exception E)
 			{
-				return;
+				throw E;
 			}
 		}
 
@@ -164,9 +212,51 @@ namespace VkDumpViewer
 				var TopNode = MainTreeView.Nodes.Add("Frame " + EntryList.Key);
 				foreach (var SubEntryList in EntryList.Value)
 				{
-					TopNode.Nodes.Add("Thread " + SubEntryList.Key);
+					var SubNode = TopNode.Nodes.Add("Thread " + SubEntryList.Key);
+					foreach (var Item in SubEntryList.Value.Items)
+					{
+						Item.Fill(SubNode);
+					}
 				}
 			}
+		}
+
+		string ParseCommandBuffer()
+		{
+			SkipWhitespace();
+			Match("commandBuffer:");
+			SkipWhitespace();
+			Match("VkCommandBuffer = ");
+			string CmdBuffer = CurrentLine.Substring(CurrentLineCharIndex);
+			ReadLine();
+			return CmdBuffer;
+		}
+
+		void ParseCommand()
+		{
+			SkipWhitespace();
+			if (PeekAndAdvance("vkBeginCommandBuffer("))
+			{
+				ReadLine();
+				var CmdBuffer = new FBeginCmdBuffer();
+				CurrentEntry.Items.Add(CmdBuffer);
+				CmdBuffer.CmdBuffer = ParseCommandBuffer();
+				ReadLine();
+				ReadLine();
+				ReadLine();
+				ReadLine();
+				ReadLine();
+			}
+			else if (PeekAndAdvance("vkEndCommandBuffer("))
+			{
+				ReadLine();
+
+				var CmdBuffer = new FEndCmdBuffer();
+				CurrentEntry.Items.Add(CmdBuffer);
+				CmdBuffer.CmdBuffer = ParseCommandBuffer();
+			}
+
+			ReadLine();
 		}
 	}
 }
