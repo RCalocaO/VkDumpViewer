@@ -34,6 +34,17 @@ namespace VkDumpViewer
 		}
 	}
 
+	public class FBindPipeline : FCommand
+	{
+		public string BindPoint;
+		public string Pipeline;
+
+		public override void Fill(TreeNode Node)
+		{
+			Node.Nodes.Add("BindPipeline " + BindPoint + " " + Pipeline);
+		}
+	}
+
 	public class FCmdBuffer : FBase
 	{
 		string CmdBuffer;
@@ -177,6 +188,20 @@ namespace VkDumpViewer
 			}
 		}
 
+		void Match(char c)
+		{
+			SkipWhitespace();
+			//if (Keyword == CurrentLine.Substring(CurrentLineCharIndex, Keyword.Length))
+			if (CurrentLine[CurrentLineCharIndex] == c)
+			{
+				++CurrentLineCharIndex;
+			}
+			else
+			{
+				throw new Exception("Expected '" + c + "'");
+			}
+		}
+
 		int ParseInt()
 		{
 			SkipWhitespace();
@@ -210,10 +235,10 @@ namespace VkDumpViewer
 		{
 			Match("Thread");
 			int Thread = ParseInt();
-			Match(",");
+			Match(',');
 			Match("Frame");
 			int Frame = ParseInt();
-			Match(":");
+			Match(':');
 
 			if (!FTEntries.ContainsKey(Frame))
 			{
@@ -306,15 +331,66 @@ namespace VkDumpViewer
 			}
 		}
 
-		string ParseCommandBuffer()
+		string ParseSimpleAssignmentHandle(string LHS, string RHSType)
 		{
 			SkipWhitespace();
-			Match("commandBuffer:");
+			Match(LHS);
+			Match(':');
 			SkipWhitespace();
-			Match("VkCommandBuffer = ");
-			string CmdBuffer = ParseHandle();
+			Match(RHSType);
+			Match('=');
+			string Value = ParseHandle();
 			ReadLine();
-			return CmdBuffer;
+			return Value;
+		}
+
+		string ParseSimpleAssignmentEnum(string LHS, string RHSType)
+		{
+			SkipWhitespace();
+			Match(LHS);
+			Match(':');
+			SkipWhitespace();
+			Match(RHSType);
+			Match('=');
+			string Value = ParseIdentifier();
+			Match('(');
+			int Numeric = ParseInt();
+			Match(')');
+			ReadLine();
+			return Value;
+		}
+
+		int ParseSimpleAssignmentInt(string LHS, string RHSType)
+		{
+			SkipWhitespace();
+			Match(LHS);
+			Match(':');
+			SkipWhitespace();
+			Match(RHSType);
+			Match('=');
+			int Value = ParseInt();
+			ReadLine();
+			return Value;
+		}
+
+		string ParseCommandBuffer()
+		{
+			return ParseSimpleAssignmentHandle("commandBuffer", "VkCommandBuffer");
+		}
+
+		string ParsePipeline()
+		{
+			return ParseSimpleAssignmentHandle("pipeline", "VkPipeline");
+		}
+
+		string ParsePipelineBindPoint()
+		{
+			string Bind = ParseSimpleAssignmentEnum("pipelineBindPoint", "VkPipelineBindPoint");
+			if (Bind.StartsWith("VK_PIPELINE_BIND_POINT_"))
+			{
+				Bind = Bind.Substring(23);
+			}
+			return Bind;
 		}
 
 		static bool IsAlpha(char c)
@@ -348,6 +424,7 @@ namespace VkDumpViewer
 
 		string ParseIdentifier()
 		{
+			SkipWhitespace();
 			int Start = CurrentLineCharIndex;
 			while (IsAlpha(GetCurrentChar()) || GetCurrentChar() == '_')
 			{
@@ -367,6 +444,7 @@ namespace VkDumpViewer
 
 		string ParseHandle()
 		{
+			SkipWhitespace();
 			int Start = CurrentLineCharIndex;
 
 			if (GetCurrentChar() == '0')
@@ -392,7 +470,7 @@ namespace VkDumpViewer
 			Match("VkPipelineStageFlagBits = ");
 			SkipWhitespace();
 			ParseInt();
-			Match("(");
+			Match('(');
 			string Stage = ParseIdentifier();
 			if (Stage.StartsWith("VK_PIPELINE_STAGE_"))
 			{
@@ -402,32 +480,20 @@ namespace VkDumpViewer
 					Stage = Stage.Substring(0, Stage.Length - 4);
 				}
 			}
-			Match(")");
+			Match(')');
 			ReadLine();
+
 			return Stage;
 		}
 
 		string ParseQueryPool()
 		{
-			SkipWhitespace();
-			Match("queryPool:");
-			SkipWhitespace();
-			Match("VkQueryPool = ");
-			SkipWhitespace();
-			string Pool = ParseHandle();
-			ReadLine();
-			return Pool;
+			return ParseSimpleAssignmentHandle("queryPool", "VkQueryPool");
 		}
+
 		int ParseQuery()
 		{
-			SkipWhitespace();
-			Match("query:");
-			SkipWhitespace();
-			Match("uint32_t = ");
-			SkipWhitespace();
-			int Query = ParseInt();
-			ReadLine();
-			return Query;
+			return ParseSimpleAssignmentInt("query", "uint32_t");
 		}
 
 		void ParseCommand()
@@ -467,6 +533,19 @@ namespace VkDumpViewer
 					WT.PipelineState = ParsePipelineStageBits();
 					WT.QueryPool = ParseQueryPool();
 					WT.Query = ParseQuery();
+
+					FCmdBuffer CB = CurrentFTEntry.GetCmdBufferForAdd(CmdBuffer);
+					CB.Commands.Add(WT);
+				}
+				else if (PeekAndAdvance("vkCmdBindPipeline("))
+				{
+					ReadLine();
+
+					var WT = new FBindPipeline();
+
+					string CmdBuffer = ParseCommandBuffer();
+					WT.BindPoint = ParsePipelineBindPoint();
+					WT.Pipeline = ParsePipeline();
 
 					FCmdBuffer CB = CurrentFTEntry.GetCmdBufferForAdd(CmdBuffer);
 					CB.Commands.Add(WT);
