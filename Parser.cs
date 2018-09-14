@@ -20,28 +20,110 @@ namespace VkDumpViewer
 
 	public class FCommand : FBase
 	{
-		public string CmdBuffer;
 	}
 
-	public class FBeginCmdBuffer : FCommand
+	public class FWriteTimestamp : FCommand
 	{
+		public string PipelineState;
+		public string QueryPool;
+		public int Query;
+
 		public override void Fill(TreeNode Node)
 		{
-			Node.Nodes.Add(CmdBuffer + ": BEGIN");
+			Node.Nodes.Add("WriteTimestamp " + PipelineState + " Pool " + QueryPool + " Query " + Query);
 		}
 	}
 
-	public class FEndCmdBuffer : FCommand
+	public class FCmdBuffer : FBase
 	{
+		string CmdBuffer;
+		public enum EState
+		{
+			Begun,
+			Ended,
+		}
+		public EState State = EState.Begun;
+		public List<FCommand> Commands = new List<FCommand>();
+
+		public bool IsReadyToBegin()
+		{
+			return State == EState.Ended;
+		}
+
+		public bool IsInsideBegin()
+		{
+			return State == EState.Begun;
+		}
+
+		public FCmdBuffer(string InCmdBuffer)
+		{
+			CmdBuffer = InCmdBuffer;
+		}
+
 		public override void Fill(TreeNode Node)
 		{
-			Node.Nodes.Add(CmdBuffer + ": END");
+			foreach (var Cmd in Commands)
+			{
+				Cmd.Fill(Node);
+			}
 		}
 	}
 
-	public class FEntry
+	public class FFrameThreadEntry : FBase
 	{
-		public List<FBase> Items = new List<FBase>();
+		public int Thread = 0;
+		public int Frame = 0;
+
+		public Dictionary<string, FCmdBuffer> CmdBuffers = new Dictionary<string, FCmdBuffer>();
+
+		public void BeginCmdBuffer(string CmdBuffer)
+		{
+			if (CmdBuffers.ContainsKey(CmdBuffer))
+			{
+				FCmdBuffer CB = CmdBuffers[CmdBuffer];
+				if (!CB.IsReadyToBegin())
+				{
+					throw new Exception("Already begun CmdBuffer " + CmdBuffer);
+				}
+				CB.State = FCmdBuffer.EState.Begun;
+				return;
+			}
+			else
+			{
+				var NewCmdBuffer = new FCmdBuffer(CmdBuffer);
+				CmdBuffers.Add(CmdBuffer, NewCmdBuffer);
+			}
+		}
+
+		public FCmdBuffer GetCmdBufferForAdd(string CmdBuffer)
+		{
+			if (!CmdBuffers.ContainsKey(CmdBuffer))
+			{
+				throw new Exception("Couldn't find CmdBuffer " + CmdBuffer);
+			}
+
+			FCmdBuffer CB = CmdBuffers[CmdBuffer];
+			if (!CB.IsInsideBegin())
+			{
+				throw new Exception("Haven't started CmdBuffer " + CmdBuffer);
+			}
+
+			return CB;
+		}
+
+		public void EndCmdBuffer(string CmdBuffer)
+		{
+			if (!CmdBuffers.ContainsKey(CmdBuffer))
+			{
+				throw new Exception("Couldn't find CmdBuffer " + CmdBuffer);
+			}
+			FCmdBuffer CB = CmdBuffers[CmdBuffer];
+			if (!CB.IsInsideBegin())
+			{
+				throw new Exception("No begin for CmdBuffer " + CmdBuffer);
+			}
+			CB.State = FCmdBuffer.EState.Ended;
+		}
 	}
 
 	public class FParser
@@ -52,9 +134,9 @@ namespace VkDumpViewer
 		string CurrentLine;
 		int CurrentLineCharIndex = 0;
 		char[] CurrentLineChars;
-		FEntry CurrentEntry;
+		FFrameThreadEntry CurrentFTEntry;
 
-		public Dictionary<int, Dictionary<int, FEntry>> Entries = new Dictionary<int, Dictionary<int, FEntry>>();
+		public Dictionary<int, Dictionary<int, FFrameThreadEntry>> FTEntries = new Dictionary<int, Dictionary<int, FFrameThreadEntry>>();
 
 		public FParser(string Filename)
 		{
@@ -75,7 +157,7 @@ namespace VkDumpViewer
 
 		void SkipWhitespace()
 		{
-			while (CurrentLineChars[CurrentLineCharIndex] == ' ' || CurrentLineChars[CurrentLineCharIndex] == '\t' && CurrentLineCharIndex < CurrentLineChars.Length)
+			while (GetCurrentChar() == ' ' || GetCurrentChar() == '\t' && CurrentLineCharIndex < CurrentLineChars.Length)
 			{
 				++CurrentLineCharIndex;
 			}
@@ -99,7 +181,7 @@ namespace VkDumpViewer
 		{
 			SkipWhitespace();
 			int StartInt = CurrentLineCharIndex;
-			if (CurrentLineChars[CurrentLineCharIndex] == '-')
+			if (GetCurrentChar() == '-')
 			{
 				++CurrentLineCharIndex;
 			}
@@ -109,7 +191,7 @@ namespace VkDumpViewer
 				throw new Exception("Expected integer number!");
 			}
 
-			while (CurrentLineChars[CurrentLineCharIndex] >= '0' && CurrentLineChars[CurrentLineCharIndex] <= '9' && CurrentLineCharIndex < CurrentLineChars.Length)
+			while (GetCurrentChar() >= '0' && GetCurrentChar() <= '9' && CurrentLineCharIndex < CurrentLineChars.Length)
 			{
 				++CurrentLineCharIndex;
 			}
@@ -133,22 +215,24 @@ namespace VkDumpViewer
 			int Frame = ParseInt();
 			Match(":");
 
-			if (!Entries.ContainsKey(Frame))
+			if (!FTEntries.ContainsKey(Frame))
 			{
-				Entries.Add(Frame, new Dictionary<int, FEntry>());
+				FTEntries.Add(Frame, new Dictionary<int, FFrameThreadEntry>());
 			}
 
-			if (Entries[Frame].ContainsKey(Thread))
+			if (FTEntries[Frame].ContainsKey(Thread))
 			{
-				CurrentEntry = Entries[Frame][Thread];
+				CurrentFTEntry = FTEntries[Frame][Thread];
 			}
 			else
 			{
-				CurrentEntry = new FEntry();
-				Entries[Frame].Add(Thread, CurrentEntry);
+				CurrentFTEntry = new FFrameThreadEntry();
+				CurrentFTEntry.Thread = Thread;
+				CurrentFTEntry.Frame = Frame;
+				FTEntries[Frame].Add(Thread, CurrentFTEntry);
 				Console.WriteLine((LineIndex + 1) + ": Thread " + Thread + ", Frame " + Frame);
 			}
-			
+
 			ReadLine();
 		}
 
@@ -181,7 +265,7 @@ namespace VkDumpViewer
 
 				ReadLine();
 			}
-			catch(Exception E)
+			catch (Exception E)
 			{
 				throw E;
 			}
@@ -207,15 +291,16 @@ namespace VkDumpViewer
 
 		public void PopulateTreeView(TreeView MainTreeView)
 		{
-			foreach (var EntryList in Entries)
+			foreach (var EntryList in FTEntries)
 			{
 				var TopNode = MainTreeView.Nodes.Add("Frame " + EntryList.Key);
 				foreach (var SubEntryList in EntryList.Value)
 				{
 					var SubNode = TopNode.Nodes.Add("Thread " + SubEntryList.Key);
-					foreach (var Item in SubEntryList.Value.Items)
+					foreach (var CmdBuffer in SubEntryList.Value.CmdBuffers)
 					{
-						Item.Fill(SubNode);
+						var CmdBufNode = SubNode.Nodes.Add("CB: " + CmdBuffer.Key);
+						CmdBuffer.Value.Fill(CmdBufNode);
 					}
 				}
 			}
@@ -227,36 +312,172 @@ namespace VkDumpViewer
 			Match("commandBuffer:");
 			SkipWhitespace();
 			Match("VkCommandBuffer = ");
-			string CmdBuffer = CurrentLine.Substring(CurrentLineCharIndex);
+			string CmdBuffer = ParseHandle();
 			ReadLine();
 			return CmdBuffer;
 		}
 
-		void ParseCommand()
+		static bool IsAlpha(char c)
+		{
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+		}
+		static bool IsNumeric(char c)
+		{
+			return (c >= '0' && c <= '9');
+		}
+
+		static bool IsHex(char c)
+		{
+			return (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || IsNumeric(c);
+		}
+
+		static bool IsAlphaNumeric(char c)
+		{
+			return IsNumeric(c) || IsAlpha(c);
+		}
+
+		char GetCurrentChar()
+		{
+			if (CurrentLineCharIndex == CurrentLineChars.Length)
+			{
+				return '\0';
+			}
+
+			return CurrentLineChars[CurrentLineCharIndex];
+		}
+
+		string ParseIdentifier()
+		{
+			int Start = CurrentLineCharIndex;
+			while (IsAlpha(GetCurrentChar()) || GetCurrentChar() == '_')
+			{
+				++CurrentLineCharIndex;
+			}
+			while (IsAlphaNumeric(GetCurrentChar()) || GetCurrentChar() == '_')
+			{
+				++CurrentLineCharIndex;
+			}
+
+			if (CurrentLineCharIndex == Start)
+			{
+				throw new Exception("Expected identifier!");
+			}
+			return CurrentLine.Substring(Start, CurrentLineCharIndex - Start);
+		}
+
+		string ParseHandle()
+		{
+			int Start = CurrentLineCharIndex;
+
+			if (GetCurrentChar() == '0')
+			{
+				while (CurrentLineCharIndex < CurrentLineChars.Length && IsHex(GetCurrentChar()))
+				{
+					++CurrentLineCharIndex;
+				}
+			}
+
+			if (CurrentLineCharIndex == Start)
+			{
+				throw new Exception("Expected Vk handle!");
+			}
+			return CurrentLine.Substring(Start, CurrentLineCharIndex - Start);
+		}
+
+		string ParsePipelineStageBits()
 		{
 			SkipWhitespace();
-			if (PeekAndAdvance("vkBeginCommandBuffer("))
+			Match("pipelineStage:");
+			SkipWhitespace();
+			Match("VkPipelineStageFlagBits = ");
+			SkipWhitespace();
+			ParseInt();
+			Match("(");
+			string Stage = ParseIdentifier();
+			if (Stage.StartsWith("VK_PIPELINE_STAGE_"))
 			{
-				ReadLine();
-				var CmdBuffer = new FBeginCmdBuffer();
-				CurrentEntry.Items.Add(CmdBuffer);
-				CmdBuffer.CmdBuffer = ParseCommandBuffer();
-				ReadLine();
-				ReadLine();
-				ReadLine();
-				ReadLine();
-				ReadLine();
+				Stage = Stage.Substring(18);
+				if (Stage.EndsWith("_BIT"))
+				{
+					Stage = Stage.Substring(0, Stage.Length - 4);
+				}
 			}
-			else if (PeekAndAdvance("vkEndCommandBuffer("))
-			{
-				ReadLine();
-
-				var CmdBuffer = new FEndCmdBuffer();
-				CurrentEntry.Items.Add(CmdBuffer);
-				CmdBuffer.CmdBuffer = ParseCommandBuffer();
-			}
-
+			Match(")");
 			ReadLine();
+			return Stage;
+		}
+
+		string ParseQueryPool()
+		{
+			SkipWhitespace();
+			Match("queryPool:");
+			SkipWhitespace();
+			Match("VkQueryPool = ");
+			SkipWhitespace();
+			string Pool = ParseHandle();
+			ReadLine();
+			return Pool;
+		}
+		int ParseQuery()
+		{
+			SkipWhitespace();
+			Match("query:");
+			SkipWhitespace();
+			Match("uint32_t = ");
+			SkipWhitespace();
+			int Query = ParseInt();
+			ReadLine();
+			return Query;
+		}
+
+		void ParseCommand()
+		{
+			try
+			{
+				SkipWhitespace();
+				if (PeekAndAdvance("vkBeginCommandBuffer("))
+				{
+					ReadLine();
+					//var CmdBuffer = new FBeginCmdBuffer();
+					string CmdBuffer = ParseCommandBuffer();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+
+					CurrentFTEntry.BeginCmdBuffer(CmdBuffer);
+				}
+				else if (PeekAndAdvance("vkEndCommandBuffer("))
+				{
+					ReadLine();
+
+					//var CmdBuffer = new FEndCmdBuffer();
+					//CurrentFTEntry.Items.Add(CmdBuffer);
+					string CmdBuffer = ParseCommandBuffer();
+					CurrentFTEntry.EndCmdBuffer(CmdBuffer);
+				}
+				else if (PeekAndAdvance("vkCmdWriteTimestamp("))
+				{
+					ReadLine();
+
+					var WT = new FWriteTimestamp();
+
+					string CmdBuffer = ParseCommandBuffer();
+					WT.PipelineState = ParsePipelineStageBits();
+					WT.QueryPool = ParseQueryPool();
+					WT.Query = ParseQuery();
+
+					FCmdBuffer CB = CurrentFTEntry.GetCmdBufferForAdd(CmdBuffer);
+					CB.Commands.Add(WT);
+				}
+
+				ReadLine();
+			}
+			catch (Exception E)
+			{
+				throw E;
+			}
 		}
 	}
 }

@@ -33,8 +33,8 @@
 			this.openToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 			this.exitToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 			this.splitContainer1 = new System.Windows.Forms.SplitContainer();
-			this.LogTextBox = new System.Windows.Forms.TextBox();
 			this.MainTreeView = new System.Windows.Forms.TreeView();
+			this.LogTextBox = new System.Windows.Forms.TextBox();
 			this.menuStrip1.SuspendLayout();
 			((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit();
 			this.splitContainer1.Panel1.SuspendLayout();
@@ -76,6 +76,9 @@
 			// 
 			// splitContainer1
 			// 
+			this.splitContainer1.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
 			this.splitContainer1.Location = new System.Drawing.Point(0, 24);
 			this.splitContainer1.Name = "splitContainer1";
 			this.splitContainer1.Orientation = System.Windows.Forms.Orientation.Horizontal;
@@ -91,20 +94,26 @@
 			this.splitContainer1.SplitterDistance = 697;
 			this.splitContainer1.TabIndex = 1;
 			// 
+			// MainTreeView
+			// 
+			this.MainTreeView.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+			this.MainTreeView.Location = new System.Drawing.Point(13, 4);
+			this.MainTreeView.Name = "MainTreeView";
+			this.MainTreeView.Size = new System.Drawing.Size(1068, 690);
+			this.MainTreeView.TabIndex = 0;
+			// 
 			// LogTextBox
 			// 
+			this.LogTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
 			this.LogTextBox.Location = new System.Drawing.Point(13, 4);
 			this.LogTextBox.Multiline = true;
 			this.LogTextBox.Name = "LogTextBox";
 			this.LogTextBox.Size = new System.Drawing.Size(1068, 101);
 			this.LogTextBox.TabIndex = 0;
-			// 
-			// MainTreeView
-			// 
-			this.MainTreeView.Location = new System.Drawing.Point(13, 4);
-			this.MainTreeView.Name = "MainTreeView";
-			this.MainTreeView.Size = new System.Drawing.Size(1068, 690);
-			this.MainTreeView.TabIndex = 0;
 			// 
 			// MainViewer
 			// 
