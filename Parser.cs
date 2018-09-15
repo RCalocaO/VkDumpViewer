@@ -11,6 +11,27 @@ using System.IO;
 
 namespace VkDumpViewer
 {
+	public class Util
+	{
+		public static void check(bool b, string Msg)
+		{
+			if (!b)
+			{
+				throw new Exception(Msg);
+			}
+
+		}
+
+		public static void check(bool b)
+		{
+			if (!b)
+			{
+				check(b, "check() failed");
+			}
+
+		}
+	}
+
 	public class FBase
 	{
 		public virtual void Fill(TreeNode Node)
@@ -45,12 +66,31 @@ namespace VkDumpViewer
 		}
 	}
 
+	public class FBeginRP : FCommand
+	{
+		public string RenderPass;
+
+		public override void Fill(TreeNode Node)
+		{
+			Node.Nodes.Add("BeginRP " + RenderPass);
+		}
+	}
+
+	public class FEndRP : FCommand
+	{
+		public override void Fill(TreeNode Node)
+		{
+			Node.Nodes.Add("EndRP");
+		}
+	}
+
 	public class FCmdBuffer : FBase
 	{
 		string CmdBuffer;
 		public enum EState
 		{
 			Begun,
+			InsideRenderPass,
 			Ended,
 		}
 		public EState State = EState.Begun;
@@ -62,6 +102,11 @@ namespace VkDumpViewer
 		}
 
 		public bool IsInsideBegin()
+		{
+			return State == EState.Begun || State == EState.InsideRenderPass;
+		}
+
+		public bool IsOutsideRenderPass()
 		{
 			return State == EState.Begun;
 		}
@@ -92,10 +137,7 @@ namespace VkDumpViewer
 			if (CmdBuffers.ContainsKey(CmdBuffer))
 			{
 				FCmdBuffer CB = CmdBuffers[CmdBuffer];
-				if (!CB.IsReadyToBegin())
-				{
-					throw new Exception("Already begun CmdBuffer " + CmdBuffer);
-				}
+				Util.check(CB.IsReadyToBegin(), "Already begun CmdBuffer " + CmdBuffer);
 				CB.State = FCmdBuffer.EState.Begun;
 				return;
 			}
@@ -108,37 +150,27 @@ namespace VkDumpViewer
 
 		public FCmdBuffer GetCmdBufferForAdd(string CmdBuffer)
 		{
-			if (!CmdBuffers.ContainsKey(CmdBuffer))
-			{
-				throw new Exception("Couldn't find CmdBuffer " + CmdBuffer);
-			}
+			Util.check(CmdBuffers.ContainsKey(CmdBuffer), "Couldn't find CmdBuffer " + CmdBuffer);
 
 			FCmdBuffer CB = CmdBuffers[CmdBuffer];
-			if (!CB.IsInsideBegin())
-			{
-				throw new Exception("Haven't started CmdBuffer " + CmdBuffer);
-			}
+			Util.check(CB.IsInsideBegin(), "Haven't started CmdBuffer " + CmdBuffer);
 
 			return CB;
 		}
 
 		public void EndCmdBuffer(string CmdBuffer)
 		{
-			if (!CmdBuffers.ContainsKey(CmdBuffer))
-			{
-				throw new Exception("Couldn't find CmdBuffer " + CmdBuffer);
-			}
+			Util.check(CmdBuffers.ContainsKey(CmdBuffer), "Couldn't find CmdBuffer " + CmdBuffer);
+
 			FCmdBuffer CB = CmdBuffers[CmdBuffer];
-			if (!CB.IsInsideBegin())
-			{
-				throw new Exception("No begin for CmdBuffer " + CmdBuffer);
-			}
+			Util.check(CB.IsInsideBegin(), "No begin for CmdBuffer " + CmdBuffer);
 			CB.State = FCmdBuffer.EState.Ended;
 		}
 	}
 
 	public class FParser
 	{
+
 		string[] Lines;
 		int LineIndex = 0;
 
@@ -184,7 +216,7 @@ namespace VkDumpViewer
 			}
 			else
 			{
-				throw new Exception("Expected '" + Keyword + "'");
+				Util.check(false, "Expected '" + Keyword + "'");
 			}
 		}
 
@@ -198,7 +230,7 @@ namespace VkDumpViewer
 			}
 			else
 			{
-				throw new Exception("Expected '" + c + "'");
+				Util.check(false, "Expected '" + c + "'");
 			}
 		}
 
@@ -211,10 +243,7 @@ namespace VkDumpViewer
 				++CurrentLineCharIndex;
 			}
 
-			if (CurrentLineCharIndex == CurrentLineChars.Length)
-			{
-				throw new Exception("Expected integer number!");
-			}
+			Util.check(CurrentLineCharIndex < CurrentLineChars.Length, "Expected integer number!");
 
 			while (GetCurrentChar() >= '0' && GetCurrentChar() <= '9' && CurrentLineCharIndex < CurrentLineChars.Length)
 			{
@@ -223,10 +252,7 @@ namespace VkDumpViewer
 
 			string Number = CurrentLine.Substring(StartInt, CurrentLineCharIndex - StartInt);
 			int Value = 0;
-			if (!int.TryParse(Number, out Value))
-			{
-				throw new Exception("Expected integer number!");
-			}
+			Util.check(int.TryParse(Number, out Value), "Expected integer number!");
 
 			return Value;
 		}
@@ -435,10 +461,8 @@ namespace VkDumpViewer
 				++CurrentLineCharIndex;
 			}
 
-			if (CurrentLineCharIndex == Start)
-			{
-				throw new Exception("Expected identifier!");
-			}
+			Util.check(Start < CurrentLineCharIndex, "Expected identifier!");
+
 			return CurrentLine.Substring(Start, CurrentLineCharIndex - Start);
 		}
 
@@ -455,10 +479,8 @@ namespace VkDumpViewer
 				}
 			}
 
-			if (CurrentLineCharIndex == Start)
-			{
-				throw new Exception("Expected Vk handle!");
-			}
+			Util.check(Start < CurrentLineCharIndex, "Expected Vk handle!");
+
 			return CurrentLine.Substring(Start, CurrentLineCharIndex - Start);
 		}
 
@@ -550,7 +572,65 @@ namespace VkDumpViewer
 					FCmdBuffer CB = CurrentFTEntry.GetCmdBufferForAdd(CmdBuffer);
 					CB.Commands.Add(WT);
 				}
+				else if (PeekAndAdvance("vkCmdBeginRenderPass("))
+				{
+					ReadLine();
 
+					//var WT = new FBindPipeline();
+					string CmdBuffer = ParseCommandBuffer();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					string RP = ParseSimpleAssignmentHandle("renderPass", "VkRenderPass");
+					string FB = ParseSimpleAssignmentHandle("framebuffer", "VkFramebuffer");
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					ReadLine();
+					int ClearValueCount = ParseSimpleAssignmentInt("clearValueCount", "uint32_t");
+					ReadLine();
+					for (int Index = 0; Index < ClearValueCount; ++Index)
+					{
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+						ReadLine();
+					}
+					ReadLine();
+
+					FCmdBuffer CB = CurrentFTEntry.GetCmdBufferForAdd(CmdBuffer);
+					Util.check(CB.IsOutsideRenderPass());
+					var BRP = new FBeginRP();
+					BRP.RenderPass = RP;
+					CB.Commands.Add(BRP);
+					CB.State = FCmdBuffer.EState.InsideRenderPass;
+				}
+				else if (PeekAndAdvance("vkCmdEndRenderPass("))
+				{
+					ReadLine();
+					string CmdBuffer = ParseCommandBuffer();
+					FCmdBuffer CB = CurrentFTEntry.GetCmdBufferForAdd(CmdBuffer);
+					CB.Commands.Add(new FEndRP());
+					CB.State = FCmdBuffer.EState.Begun;
+				}
 				ReadLine();
 			}
 			catch (Exception E)
